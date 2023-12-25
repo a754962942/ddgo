@@ -5,8 +5,10 @@ import "strings"
 /*路由前缀书实现*/
 
 type treeNode struct {
-	name     string
-	children []*treeNode
+	name       string
+	children   []*treeNode
+	routerName string
+	isEnd      bool
 }
 
 // Put path: /user/get/:id
@@ -26,7 +28,12 @@ func (t *treeNode) Put(path string) {
 			}
 		}
 		if !isMatch {
+			isEnd := false
+			if index == len(strs)-1 {
+				isEnd = true
+			}
 			t2 := &treeNode{
+				isEnd:    isEnd,
 				name:     name,
 				children: make([]*treeNode, 0),
 			}
@@ -40,16 +47,18 @@ func (t *treeNode) Put(path string) {
 
 // get path: /user/get/1
 func (t *treeNode) Get(path string) *treeNode {
-
 	strs := strings.Split(path, "/")
-	for index, str := range strs {
+	var routerName string
 
+	for index, str := range strs {
 		isMatch := false
 		for _, child := range t.children {
 			if child.name == str ||
 				child.name == "*" ||
 				strings.Contains(child.name, ":") {
 				isMatch = true
+				routerName += "/" + child.name
+				child.routerName = routerName
 				t = child
 				if index == len(strs)-1 {
 					return child
@@ -60,6 +69,8 @@ func (t *treeNode) Get(path string) *treeNode {
 		if !isMatch {
 			for _, child := range t.children {
 				if child.name == "**" {
+					routerName += "/" + child.name
+					child.routerName = routerName
 					return child
 				}
 			}
