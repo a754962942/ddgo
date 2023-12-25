@@ -20,8 +20,20 @@ type routerGroup struct {
 	//冗余
 	handlerMethodMap map[string][]string
 	treeNode         *treeNode
-	preMiddlewares   []*MiddlewareFunc
-	postMiddlewares  []*MiddlewareFunc
+	middlewares      []MiddlewareFunc
+}
+
+func (r *routerGroup) PreHandle(middlewareFunc ...MiddlewareFunc) {
+	r.middlewares = append(r.middlewares, middlewareFunc...)
+}
+
+func (r *routerGroup) methodHandle(h HandlerFunc, ctx Context) {
+	if r.middlewares != nil {
+		for _, middlewareFunc := range r.middlewares {
+			h = middlewareFunc(h)
+		}
+	}
+	h(ctx)
 }
 
 type router struct {
@@ -43,6 +55,7 @@ func (r *routerGroup) handle(name string, method string, handlerFunc HandlerFunc
 	r.handlerMethodMap[method] = append(r.handlerMethodMap[method], left)
 	r.treeNode.Put("/" + left)
 }
+
 func (r *routerGroup) GET(name string, handlerFunc HandlerFunc) {
 	r.handle(name, http.MethodGet, handlerFunc)
 }
@@ -79,9 +92,26 @@ func New() *Engine {
 		router: router{routerGroups: make([]*routerGroup, 0)},
 	}
 }
-func (e *Engine) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	method := r.Method
 
+func (e *Engine) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	e.httpRequestHandler(w, r)
+}
+
+func (e *Engine) Run(port string) {
+	server := http.Server{
+		Addr:         port,
+		Handler:      e,
+		ReadTimeout:  2 * time.Second,
+		WriteTimeout: 5 * time.Second,
+	}
+	err := server.ListenAndServe()
+	if err != nil {
+		panic(err)
+	}
+}
+
+func (e *Engine) httpRequestHandler(w http.ResponseWriter, r *http.Request) {
+	method := r.Method
 	//fmt.Println("method:", method)
 	for _, group := range e.routerGroups {
 		groupName := SubStrAndTrim(r.RequestURI, "/"+group.name)
@@ -92,11 +122,11 @@ func (e *Engine) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				R: r,
 			}
 			if handle, ok := group.handlerFuncMap[node.routerName][ANY]; ok {
-				handle(context)
+				group.methodHandle(handle, context)
 				return
 			}
 			if handle, ok := group.handlerFuncMap[node.routerName][method]; ok {
-				handle(context)
+				group.methodHandle(handle, context)
 				return
 			}
 			w.WriteHeader(http.StatusMethodNotAllowed)
@@ -111,18 +141,5 @@ func (e *Engine) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	_, err := fmt.Fprintln(w, r.RequestURI+" Not Found")
 	if err != nil {
 		log.Println(err)
-	}
-	return
-}
-func (e *Engine) Run(port string) {
-	server := http.Server{
-		Addr:         port,
-		Handler:      e,
-		ReadTimeout:  2 * time.Second,
-		WriteTimeout: 5 * time.Second,
-	}
-	err := server.ListenAndServe()
-	if err != nil {
-		panic(err)
 	}
 }
