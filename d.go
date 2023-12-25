@@ -2,18 +2,17 @@ package ddgo
 
 import (
 	"fmt"
+	"log"
 	"net/http"
 	"strings"
 	"time"
 )
 
-type HandlerFunc func(context Context)
-
 const ANY = "ANY"
 
-type router struct {
-	routerGroups []*routerGroup
-}
+type HandlerFunc func(context Context)
+
+type MiddlewareFunc func(handlerFunc HandlerFunc) HandlerFunc
 
 type routerGroup struct {
 	name           string
@@ -21,19 +20,25 @@ type routerGroup struct {
 	//冗余
 	handlerMethodMap map[string][]string
 	treeNode         *treeNode
+	preMiddlewares   []*MiddlewareFunc
+	postMiddlewares  []*MiddlewareFunc
+}
+
+type router struct {
+	routerGroups []*routerGroup
 }
 
 func (r *routerGroup) handle(name string, method string, handlerFunc HandlerFunc) {
 	left := strings.TrimLeft(name, "/")
-	_, ok := r.handlerFuncMap[left]
+	_, ok := r.handlerFuncMap["/"+left]
 	if !ok {
-		r.handlerFuncMap[left] = make(map[string]HandlerFunc)
+		r.handlerFuncMap["/"+left] = make(map[string]HandlerFunc)
 	}
-	_, ok = r.handlerFuncMap[left][method]
+	_, ok = r.handlerFuncMap["/"+left][method]
 	if ok {
 		panic(method + " method already exist")
 	}
-	r.handlerFuncMap[left][method] = handlerFunc
+	r.handlerFuncMap["/"+left][method] = handlerFunc
 	//冗余
 	r.handlerMethodMap[method] = append(r.handlerMethodMap[method], left)
 	r.treeNode.Put("/" + left)
@@ -81,26 +86,32 @@ func (e *Engine) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	for _, group := range e.routerGroups {
 		groupName := SubStrAndTrim(r.RequestURI, "/"+group.name)
 		node := group.treeNode.Get(groupName)
-		if node != nil {
+		if node != nil && node.isEnd {
 			context := Context{
 				W: w,
 				R: r,
 			}
-			if handle, ok := group.handlerFuncMap[groupName][ANY]; ok {
+			if handle, ok := group.handlerFuncMap[node.routerName][ANY]; ok {
 				handle(context)
 				return
 			}
-			if handle, ok := group.handlerFuncMap[groupName][method]; ok {
+			if handle, ok := group.handlerFuncMap[node.routerName][method]; ok {
 				handle(context)
 				return
 			}
 			w.WriteHeader(http.StatusMethodNotAllowed)
-			fmt.Fprintln(w, r.RequestURI+" "+method+" Not ALLOW")
+			_, err := fmt.Fprintln(w, r.RequestURI+" "+method+" Not ALLOW")
+			if err != nil {
+				log.Println(err)
+			}
 			return
 		}
 	}
 	w.WriteHeader(http.StatusNotFound)
-	fmt.Fprintln(w, r.RequestURI+" Not Found")
+	_, err := fmt.Fprintln(w, r.RequestURI+" Not Found")
+	if err != nil {
+		log.Println(err)
+	}
 	return
 }
 func (e *Engine) Run(port string) {
