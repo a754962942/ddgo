@@ -15,8 +15,9 @@ type HandlerFunc func(context Context)
 type MiddlewareFunc func(handlerFunc HandlerFunc) HandlerFunc
 
 type routerGroup struct {
-	name           string
-	handlerFuncMap map[string]map[string]HandlerFunc
+	name               string
+	handlerFuncMap     map[string]map[string]HandlerFunc
+	middlewaresFuncMap map[string]map[string][]MiddlewareFunc
 	//冗余
 	handlerMethodMap map[string][]string
 	treeNode         *treeNode
@@ -27,9 +28,16 @@ func (r *routerGroup) PreHandle(middlewareFunc ...MiddlewareFunc) {
 	r.middlewares = append(r.middlewares, middlewareFunc...)
 }
 
-func (r *routerGroup) methodHandle(h HandlerFunc, ctx Context) {
+func (r *routerGroup) methodHandle(routerName string, method string, h HandlerFunc, ctx Context) {
+	//middlewares
 	if r.middlewares != nil {
 		for _, middlewareFunc := range r.middlewares {
+			h = middlewareFunc(h)
+		}
+	}
+	middlewareFuncs := r.middlewaresFuncMap[routerName][method]
+	if middlewareFuncs != nil {
+		for _, middlewareFunc := range middlewareFuncs {
 			h = middlewareFunc(h)
 		}
 	}
@@ -40,32 +48,32 @@ type router struct {
 	routerGroups []*routerGroup
 }
 
-func (r *routerGroup) handle(name string, method string, handlerFunc HandlerFunc) {
+func (r *routerGroup) handle(name string, method string, handlerFunc HandlerFunc, middlewareFunc ...MiddlewareFunc) {
 	left := strings.TrimLeft(name, "/")
 	_, ok := r.handlerFuncMap["/"+left]
 	if !ok {
 		r.handlerFuncMap["/"+left] = make(map[string]HandlerFunc)
+		r.middlewaresFuncMap["/"+left] = make(map[string][]MiddlewareFunc)
 	}
 	_, ok = r.handlerFuncMap["/"+left][method]
 	if ok {
 		panic(method + " method already exist")
 	}
 	r.handlerFuncMap["/"+left][method] = handlerFunc
-	//冗余
-	r.handlerMethodMap[method] = append(r.handlerMethodMap[method], left)
+	r.middlewaresFuncMap["/"+left][method] = middlewareFunc
 	r.treeNode.Put("/" + left)
 }
 
-func (r *routerGroup) GET(name string, handlerFunc HandlerFunc) {
-	r.handle(name, http.MethodGet, handlerFunc)
+func (r *routerGroup) GET(name string, handlerFunc HandlerFunc, middlewareFunc ...MiddlewareFunc) {
+	r.handle(name, http.MethodGet, handlerFunc, middlewareFunc...)
 }
 
-func (r *routerGroup) POST(name string, handlerFunc HandlerFunc) {
-	r.handle(name, http.MethodPost, handlerFunc)
+func (r *routerGroup) POST(name string, handlerFunc HandlerFunc, middlewareFunc ...MiddlewareFunc) {
+	r.handle(name, http.MethodPost, handlerFunc, middlewareFunc...)
 }
 
-func (r *routerGroup) ANY(name string, handlerFunc HandlerFunc) {
-	r.handle(name, ANY, handlerFunc)
+func (r *routerGroup) ANY(name string, handlerFunc HandlerFunc, middlewareFunc ...MiddlewareFunc) {
+	r.handle(name, ANY, handlerFunc, middlewareFunc...)
 }
 
 func (r *router) Group(name string) *routerGroup {
@@ -78,6 +86,7 @@ func (r *router) Group(name string) *routerGroup {
 			name:     "/" + left,
 			children: make([]*treeNode, 0),
 		},
+		middlewaresFuncMap: make(map[string]map[string][]MiddlewareFunc),
 	}
 	r.routerGroups = append(r.routerGroups, rg)
 	return rg
@@ -122,11 +131,11 @@ func (e *Engine) httpRequestHandler(w http.ResponseWriter, r *http.Request) {
 				R: r,
 			}
 			if handle, ok := group.handlerFuncMap[node.routerName][ANY]; ok {
-				group.methodHandle(handle, context)
+				group.methodHandle(node.routerName, ANY, handle, context)
 				return
 			}
 			if handle, ok := group.handlerFuncMap[node.routerName][method]; ok {
-				group.methodHandle(handle, context)
+				group.methodHandle(node.routerName, method, handle, context)
 				return
 			}
 			w.WriteHeader(http.StatusMethodNotAllowed)
