@@ -1,6 +1,8 @@
 package ddgo
 
 import (
+	"encoding/json"
+	"encoding/xml"
 	"fmt"
 	"html/template"
 	"log"
@@ -8,8 +10,9 @@ import (
 )
 
 type Context struct {
-	W http.ResponseWriter
-	R *http.Request
+	W      http.ResponseWriter
+	R      *http.Request
+	engine *Engine
 }
 
 func (c *Context) String(msg ...string) {
@@ -54,6 +57,37 @@ func (c *Context) HTMLTemplateGlob(statCode int, name string, data any, parttern
 		log.Println(err)
 	}
 	err = files.Execute(c.W, data)
+	if err != nil {
+		log.Println(err)
+	}
+}
+
+func (c *Context) Template(name string, data interface{}) {
+	c.W.Header().Set("Content-Type", "text/html; charset=utf-8")
+	c.W.WriteHeader(http.StatusOK)
+	err := c.engine.HTMLRender.Template.ExecuteTemplate(c.W, name, data)
+	if err != nil {
+		log.Println(err)
+	}
+}
+
+func (c *Context) JSON(statCode int, data any) {
+	c.W.Header().Set("Content-Type", "application/json; charset=utf-8")
+	c.W.WriteHeader(statCode)
+	marshal, err := json.Marshal(data)
+	if err != nil {
+		log.Println(err)
+	}
+	_, err = c.W.Write(marshal)
+	if err != nil {
+		log.Println(err)
+	}
+}
+
+func (c *Context) XML(statCode int, data any) {
+	c.W.Header().Set("Content-Type", "application/xml; charset=utf-8")
+	c.W.WriteHeader(statCode)
+	err := xml.NewEncoder(c.W).Encode(data)
 	if err != nil {
 		log.Println(err)
 	}
