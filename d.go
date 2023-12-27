@@ -2,6 +2,8 @@ package ddgo
 
 import (
 	"fmt"
+	"github.com/a754962942/ddgo/render"
+	"html/template"
 	"log"
 	"net/http"
 	"strings"
@@ -93,6 +95,8 @@ func (r *router) Group(name string) *routerGroup {
 }
 
 type Engine struct {
+	funcMap    template.FuncMap
+	HTMLRender render.HTMLRender
 	router
 }
 
@@ -101,7 +105,18 @@ func New() *Engine {
 		router: router{routerGroups: make([]*routerGroup, 0)},
 	}
 }
+func (e *Engine) SetFuncMap(funcMap template.FuncMap) {
+	e.funcMap = funcMap
+}
 
+func (e *Engine) LoadTemplate(pattern string) {
+	t := template.Must(template.New("").Funcs(e.funcMap).ParseGlob(pattern))
+	e.HTMLRender = render.HTMLRender{Template: t}
+}
+
+func (e *Engine) SetHtmlTemplate(t *template.Template) {
+	e.HTMLRender = render.HTMLRender{Template: t}
+}
 func (e *Engine) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	e.httpRequestHandler(w, r)
 }
@@ -127,8 +142,9 @@ func (e *Engine) httpRequestHandler(w http.ResponseWriter, r *http.Request) {
 		node := group.treeNode.Get(groupName)
 		if node != nil && node.isEnd {
 			context := Context{
-				W: w,
-				R: r,
+				W:      w,
+				R:      r,
+				engine: e,
 			}
 			if handle, ok := group.handlerFuncMap[node.routerName][ANY]; ok {
 				group.methodHandle(node.routerName, ANY, handle, context)
