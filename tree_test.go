@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-func TestTreeNode_Put(t *testing.T) {
+func TestTreeNode(t *testing.T) {
 	node := &treeNode{
 		name:     "/",
 		children: make([]*treeNode, 0),

@@ -3,16 +3,18 @@ package ddgo
 import (
 	"fmt"
 	"github.com/a754962942/ddgo/render"
+	"github.com/a754962942/ddgo/utils"
 	"html/template"
 	"log"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 )
 
 const ANY = "ANY"
 
-type HandlerFunc func(context Context)
+type HandlerFunc func(context *Context)
 
 type MiddlewareFunc func(handlerFunc HandlerFunc) HandlerFunc
 
@@ -30,7 +32,7 @@ func (r *routerGroup) PreHandle(middlewareFunc ...MiddlewareFunc) {
 	r.middlewares = append(r.middlewares, middlewareFunc...)
 }
 
-func (r *routerGroup) methodHandle(routerName string, method string, h HandlerFunc, ctx Context) {
+func (r *routerGroup) methodHandle(routerName string, method string, h HandlerFunc, ctx *Context) {
 	//middlewares
 	if r.middlewares != nil {
 		for _, middlewareFunc := range r.middlewares {
@@ -98,12 +100,21 @@ type Engine struct {
 	funcMap    template.FuncMap
 	HTMLRender render.HTMLRender
 	router
+	pool sync.Pool
 }
 
 func New() *Engine {
-	return &Engine{
+	engine := &Engine{
 		router: router{routerGroups: make([]*routerGroup, 0)},
 	}
+	engine.pool.New = func() any {
+		return engine.allocateContext()
+	}
+	return engine
+}
+
+func (e *Engine) allocateContext() any {
+	return &Context{engine: e}
 }
 func (e *Engine) SetFuncMap(funcMap template.FuncMap) {
 	e.funcMap = funcMap
@@ -118,7 +129,11 @@ func (e *Engine) SetHtmlTemplate(t *template.Template) {
 	e.HTMLRender = render.HTMLRender{Template: t}
 }
 func (e *Engine) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	e.httpRequestHandler(w, r)
+	ctx := e.pool.Get().(*Context)
+	ctx.W = w
+	ctx.R = r
+	e.httpRequestHandler(ctx)
+	e.pool.Put(ctx)
 }
 
 func (e *Engine) Run(port string) {
@@ -134,36 +149,32 @@ func (e *Engine) Run(port string) {
 	}
 }
 
-func (e *Engine) httpRequestHandler(w http.ResponseWriter, r *http.Request) {
-	method := r.Method
+func (e *Engine) httpRequestHandler(ctx *Context) {
+	method := ctx.R.Method
 	//fmt.Println("method:", method)
 	for _, group := range e.routerGroups {
-		groupName := SubStrAndTrim(r.RequestURI, "/"+group.name)
+		groupName := utils.SubStrAndTrim(ctx.R.URL.Path, "/"+group.name)
 		node := group.treeNode.Get(groupName)
 		if node != nil && node.isEnd {
-			context := Context{
-				W:      w,
-				R:      r,
-				engine: e,
-			}
+
 			if handle, ok := group.handlerFuncMap[node.routerName][ANY]; ok {
-				group.methodHandle(node.routerName, ANY, handle, context)
+				group.methodHandle(node.routerName, ANY, handle, ctx)
 				return
 			}
 			if handle, ok := group.handlerFuncMap[node.routerName][method]; ok {
-				group.methodHandle(node.routerName, method, handle, context)
+				group.methodHandle(node.routerName, method, handle, ctx)
 				return
 			}
-			w.WriteHeader(http.StatusMethodNotAllowed)
-			_, err := fmt.Fprintln(w, r.RequestURI+" "+method+" Not ALLOW")
+			ctx.W.WriteHeader(http.StatusMethodNotAllowed)
+			_, err := fmt.Fprintln(ctx.W, ctx.R.RequestURI+" "+method+" Not ALLOW")
 			if err != nil {
 				log.Println(err)
 			}
 			return
 		}
 	}
-	w.WriteHeader(http.StatusNotFound)
-	_, err := fmt.Fprintln(w, r.RequestURI+" Not Found")
+	ctx.W.WriteHeader(http.StatusNotFound)
+	_, err := fmt.Fprintln(ctx.W, ctx.R.RequestURI+" Not Found")
 	if err != nil {
 		log.Println(err)
 	}
